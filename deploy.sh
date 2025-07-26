@@ -21,7 +21,7 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 # --- Global variables & Cleanup ---
-# Define TEST_SCRIPT here so it's globally available for the trap
+# Define TEST_SCRIPT globally so it's available for the trap on exit.
 TEST_SCRIPT=""
 # This 'trap' makes sure we clean up the temp file, no matter what.
 trap 'rm -f "$TEST_SCRIPT"' EXIT
@@ -59,7 +59,8 @@ function main() {
     print_step "First, let's grab the necessary tools (git, compiler, etc.)."
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq >/dev/null
-    apt-get install -y -qq git build-essential curl python3-pip >/dev/null || error_exit "Couldn't install the required packages. Check your internet connection or 'apt'."
+    # Added python3-requests here directly.
+    apt-get install -y -qq git build-essential curl python3 python3-requests >/dev/null || error_exit "Couldn't install the required packages. Check your internet connection or 'apt'."
     echo "✅ Tools are ready."
 
     # --- Step 2: Get 3proxy and build it ---
@@ -160,9 +161,6 @@ except Exception as e:
     print(f"Fatal error during test: {e}")
     sys.exit(1)
 PYTHON_EOF
-
-    # Use apt to install requests, the "right" way for modern Debian/Ubuntu
-    apt-get install -y -qq python3-requests >/dev/null
     
     if ! python3 "$TEST_SCRIPT" "$VDS_IP" "$PORT" "$USERNAME" "$PASSWORD"; then
         error_exit "The proxy was installed, but the connection test failed. Check your firewall!"
