@@ -1,6 +1,6 @@
 # 1-Command 3proxy Deploy
 
-A self-contained script to **instantly** deploy a private [3proxy](https://github.com/z3APA3A/3proxy) proxy server on any fresh Ubuntu/Debian machine.
+A self-contained script to **instantly** deploy a private [3proxy](https://github.com/3proxy/3proxy) proxy server on any fresh Ubuntu/Debian machine.
 
 ## 🔥 The "One Command" Method
 
