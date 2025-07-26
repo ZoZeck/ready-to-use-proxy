@@ -1,172 +1,221 @@
 #!/bin/bash
-
-# 1-Command 3proxy Deploy Script (with source compilation for maximum compatibility)
-# A self-contained script to install, configure, and test 3proxy.
 #
-# Usage:
-#   bash <(curl -sL https://.../deploy.sh) [PORT]
+#  Hey there! This script will set up a 3proxy server for you.
+#  It's designed to be run on a fresh Debian or Ubuntu box.
+#  We'll compile it from source to make sure it works everywhere.
+#  Just run it, grab a coffee, and you'll have a proxy in a few minutes.
+#
+#  - ZoZeck's friendly neighborhood sysadmin
+#
 
-# --- Configuration & Colors ---
-GREEN="\033[0;32m"
-YELLOW="\033[1;33m"
-RED="\033[0;31m"
-NC="\033[0m"
+# --- Safety First! ---
+# Exit immediately if a command fails, or if we use an unset variable.
+set -e
+set -u
 
-# --- Helper Functions ---
+# --- Let's add some color ---
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# --- A little helper for printing steps ---
+function print_step() {
+    echo -e "\n${BLUE}➤ $1${NC}"
+}
+
+# --- A better error message ---
 function error_exit() {
-    echo -e "${RED}❌ ERROR: $1${NC}" >&2
+    echo -e "\n${RED}=============================================${NC}"
+    echo -e "${RED}❌ Oh no! Something went wrong.${NC}"
+    echo -e "${RED}Error: $1${NC}"
+    echo -e "${RED}=============================================${NC}"
     exit 1
 }
 
-function check_root() {
-    if [ "$(id -u)" -ne 0 ]; then
-        error_exit "This script must be run as root (or with sudo)."
+
+# --- THE MAIN EVENT ---
+function main() {
+
+    # Gotta be root to do this stuff.
+    if [[ "$(id -u)" -ne 0 ]]; then
+        error_exit "This script needs to be run as root. Try 'sudo ./deploy.sh'"
     fi
-}
 
-# --- Main Logic Functions ---
+    clear
+    echo -e "${GREEN}==========================================="
+    echo "  🚀 Let's get you a shiny new proxy!  "
+    echo -e "===========================================${NC}"
 
-function install_dependencies() {
-    echo -e "${YELLOW}📦 Installing required packages (git, build-essential, curl, python3-pip)...${NC}"
+    # --- Step 1: Install the tools we need ---
+    print_step "First, let's grab the necessary tools (git, compiler, etc.)."
+    # This might take a moment, so let's be patient.
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq >/dev/null
-    apt-get install -y -qq git build-essential curl python3 python3-pip >/dev/null || error_exit "Failed to install dependencies."
-}
+    apt-get install -y -qq git build-essential curl python3 python3-pip >/dev/null || error_exit "Couldn't install the required packages. Check your internet connection or 'apt'."
+    echo "✅ Tools are ready."
 
-# --- MODIFIED: Compiles 3proxy from source for universal compatibility ---
-function install_3proxy() {
-    echo -e "${YELLOW}🛠️  Cloning and compiling 3proxy from source (this may take a few minutes)...${NC}"
+    # --- Step 2: Get 3proxy and build it ---
+    print_step "Downloading the latest 3proxy code and compiling it."
+    echo "This is the part that takes a minute or two..."
+
+    # We'll work in /opt, it's a good place for this kind of thing.
+    cd /opt || error_exit "Couldn't switch to /opt directory."
+    rm -rf 3proxy # Clean up any old attempts
+
+    # Clone the repo. --depth 1 makes it faster.
+    git clone --depth 1 https://github.com/3proxy/3proxy.git >/dev/null || error_exit "Failed to download the source code from GitHub."
+    cd 3proxy || error_exit "Something went wrong after downloading the code."
     
-    cd /opt || error_exit "Cannot change directory to /opt"
-    rm -rf 3proxy
-    # Using the correct, new repository URL for git clone
-    git clone --depth 1 https://github.com/3proxy/3proxy.git || error_exit "Failed to clone 3proxy repository. Check network connection to github.com."
-    cd 3proxy || error_exit "Cannot change directory to /opt/3proxy"
+    # Let's make the magic happen.
+    make -f Makefile.Linux >/dev/null || error_exit "The compilation failed. You might be on an unsupported OS."
     
-    make -f Makefile.Linux || error_exit "Failed to compile 3proxy."
-    
+    # Put the finished program where it belongs.
     install -m 755 bin/3proxy /usr/local/bin/
-    mkdir -p /etc/3proxy/ /var/log/3proxy
-}
+    echo "✅ 3proxy is compiled and installed."
 
-function configure_3proxy() {
-    echo -e "${YELLOW}📝 Creating configuration files and systemd service...${NC}"
+    # --- Step 3: Create the configuration ---
+    print_step "Setting up the configuration file."
+    
+    # Let's generate some random, secure credentials.
+    local USERNAME="user$(tr -dc a-z0-9 </dev/urandom | head -c6)"
+    local PASSWORD
+    PASSWORD=$(tr -dc A-Za-z0-9 </dev/urandom | head -c12)
+    local PORT=${1:-3128} # Use the port from the command line, or 3128 as a default.
+    local VDS_IP
+    VDS_IP=$(curl -4 -s ifconfig.me || curl -4 -s icanhazip.com)
+
+    if [[ -z "$VDS_IP" ]]; then
+        error_exit "Couldn't figure out your server's public IP address."
+    fi
+
+    # Create directories for the config and logs.
+    mkdir -p /etc/3proxy/ /var/log/3proxy
+
+    # Here's the config file. I've added comments to explain what's what.
     cat > /etc/3proxy/3proxy.cfg <<EOF
+# --- 3proxy Config ---
+# Let's keep things simple and secure.
+
+# DNS cache. Good for performance.
 nscache 65536
+
+# Timeouts in seconds.
 timeouts 1 5 30 60 180 1800 15 60
-log /var/log/3proxy/3proxy.log D
-logformat "- +_L%t.%. %N.%p %E %U %C:%c %R:%r %O %I %h %T"
+
+# We need a user and a password. 'strong' means both are required.
 auth strong
 users $USERNAME:CL:$PASSWORD
-allow $USERNAME
-proxy -n -a -p$PORT -i0.0.0.0 -e$VDS_IP
-flush
-EOF
 
+# Only allow our authenticated user.
+allow $USERNAME
+
+# The actual proxy service.
+# -a means it's an anonymous proxy.
+# -p is the port.
+# -i0.0.0.0 means listen on all available network interfaces.
+# -e is the external IP your traffic will come from.
+proxy -n -a -p$PORT -i0.0.0.0 -e$VDS_IP
+
+# A little log file, just in case.
+log /var/log/3proxy/3proxy.log D
+logformat "- +_L%t.%. %N.%p %E %U %C:%c %R:%r %O %I %h %T"
+EOF
+    echo "✅ Config file created."
+
+    # --- Step 4: Set up the service to run automatically ---
+    print_step "Creating a systemd service to keep the proxy running."
+    
+    # This systemd unit file will make sure 3proxy starts on boot
+    # and restarts if it ever crashes.
     cat > /etc/systemd/system/3proxy.service <<EOF
 [Unit]
-Description=3proxy proxy server
+Description=3proxy Tiny Proxy Server
 After=network.target
+
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/3proxy /etc/3proxy/3proxy.cfg
 ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
 RestartSec=10
+
 [Install]
 WantedBy=multi-user.target
 EOF
-}
+    echo "✅ Systemd service is ready."
 
-function start_and_test_proxy() {
-    echo -e "${YELLOW}▶️  Starting and verifying the proxy service...${NC}"
+
+    # --- Step 5: Start it up and test it! ---
+    print_step "Let's fire it up and make sure it actually works."
     systemctl daemon-reload
     systemctl enable 3proxy >/dev/null 2>&1
     systemctl restart 3proxy
+    
+    # Give it a couple of seconds to wake up.
     sleep 3
 
     if ! systemctl is-active --quiet 3proxy; then
         journalctl -u 3proxy --no-pager -n 20
-        error_exit "3proxy service failed to start. See logs above."
+        error_exit "The 3proxy service failed to start. The logs above might tell you why."
     fi
 
+    # Now for a little magic. We'll create a Python script on the fly to test our new proxy.
+    echo "Running a quick connection test..."
     local TEST_SCRIPT
     TEST_SCRIPT=$(mktemp --suffix=.py)
+    # This 'trap' makes sure we clean up the temp file, no matter what.
     trap 'rm -f "$TEST_SCRIPT"' EXIT
 
-    cat > "$TEST_SCRIPT" << 'PYTHON_EOF'
+    cat > "$TEST_SCRIPT" << PYTHON_EOF
 import sys, requests
-
-def main():
-    if len(sys.argv) != 5: sys.exit(1)
+try:
     host, port, user, password = sys.argv[1:]
     proxy_url = f"http://{user}:{password}@{host}:{port}"
+    test_url = "https://api.ipify.org"
     proxies = {"http": proxy_url, "https": proxy_url}
-    test_url = "https://api.ipify.org?format=json"
-    print(f"[*] Testing proxy {host}:{port}...")
-    try:
-        response = requests.get(test_url, proxies=proxies, timeout=15)
-        response.raise_for_status()
-        result_ip = response.json().get("ip")
-        print(f"[+] Success! Response IP: {result_ip}")
-        if result_ip == host:
-            print(f"[+] SUCCESS: Response IP matches proxy IP.")
-            sys.exit(0)
-        else:
-            print(f"[!] ERROR: Response IP ({result_ip}) does not match proxy IP ({host}).")
-            sys.exit(1)
-    except Exception as e:
-        print(f"[!] FATAL: Proxy test failed. Details: {e}")
+    ip = requests.get(test_url, proxies=proxies, timeout=10).text
+    if ip == host:
+        print(f"Success! The world sees you as {ip}")
+        sys.exit(0)
+    else:
+        print(f"Error: Proxy IP mismatch. Expected {host}, got {ip}")
         sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+except Exception as e:
+    print(f"Fatal error during test: {e}")
+    sys.exit(1)
 PYTHON_EOF
-    
-    pip3 install requests -q --disable-pip-version-check
+
+    apt-get install -y -qq python3-requests >/dev/null
     
     if ! python3 "$TEST_SCRIPT" "$VDS_IP" "$PORT" "$USERNAME" "$PASSWORD"; then
-        error_exit "Proxy connection test FAILED. Check your firewall or 3proxy logs."
+        error_exit "The proxy was installed, but the connection test failed. Check your firewall!"
     fi
-}
+    echo "✅ Connection test passed with flying colors!"
 
-function print_summary() {
-    echo -e "\n${GREEN}🎉 Done! Proxy server is ready to use.${NC}"
-    echo "-----------------------------------------------------"
-    echo -e "🔗 Address:  ${YELLOW}$VDS_IP${NC}"
-    echo -e "🚪 Port:     ${YELLOW}$PORT${NC}"
-    echo -e "👤 Login:    ${YELLOW}$USERNAME${NC}"
-    echo -e "🔑 Password: ${YELLOW}$PASSWORD${NC}"
-    echo "-----------------------------------------------------"
-    
-    local creds_file="/root/3proxy_credentials.txt"
-    echo "$VDS_IP:$PORT:$USERNAME:$PASSWORD" > "$creds_file"
-    echo -e "📄 Connection details saved to ${YELLOW}${creds_file}${NC}"
-}
-
-# --- Main Execution ---
-main() {
-    check_root
-    
-    USERNAME="user$(tr -dc a-z0-9 </dev/urandom | head -c6)"
-    PASSWORD="$(tr -dc A-Za-z0-9 </dev/urandom | head -c12)"
-    PORT=${1:-3128}
-    VDS_IP=$(curl -4 -s ifconfig.me || curl -4 -s icanhazip.com)
-    [ -z "$VDS_IP" ] && error_exit "Could not detect external IPv4 address."
-
-    echo -e "${GREEN}🚀 Starting 1-Command 3proxy deployment...${NC}"
-    echo "   Server IP: $VDS_IP | Proxy Port: $PORT"
-
-    install_dependencies
-    install_3proxy
-    configure_3proxy
-    start_and_test_proxy
-    
-    if ufw status | grep -q "Status: active"; then
+    # --- Final Step: The Grand Finale ---
+    if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
+        print_step "UFW firewall is active. Opening port $PORT for you."
         ufw allow "$PORT/tcp" >/dev/null
     fi
-    
-    print_summary
+
+    local creds_file="/root/3proxy_credentials.txt"
+    echo "$VDS_IP:$PORT:$USERNAME:$PASSWORD" > "$creds_file"
+
+    echo -e "\n${GREEN}==========================================="
+    echo -e "      🎉 All done! You're ready to go. 🎉"
+    echo -e "===========================================${NC}"
+    echo -e "Here are your credentials. Keep them safe!"
+    echo -e "-------------------------------------------"
+    echo -e "  Address:  ${YELLOW}$VDS_IP${NC}"
+    echo -e "  Port:     ${YELLOW}$PORT${NC}"
+    echo -e "  Login:    ${YELLOW}$USERNAME${NC}"
+    echo -e "  Password: ${YELLOW}$PASSWORD${NC}"
+    echo -e "-------------------------------------------"
+    echo -e "A copy has been saved to: ${YELLOW}$creds_file${NC}"
+    echo ""
 }
 
+# And... action!
 main "$@"
