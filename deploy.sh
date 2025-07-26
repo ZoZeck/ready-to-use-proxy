@@ -9,7 +9,6 @@
 #
 
 # --- Safety First! ---
-# Exit immediately if a command fails, or if we use an unset variable.
 set -e
 set -u
 
@@ -18,13 +17,14 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 RED='\033[0;31m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 # --- Global variables & Cleanup ---
-# Define TEST_SCRIPT globally so it's available for the trap on exit.
+# Define temp files globally so they're available for the trap on exit.
 TEST_SCRIPT=""
-# This 'trap' makes sure we clean up the temp file, no matter what.
-trap 'rm -f "$TEST_SCRIPT"' EXIT
+MAKE_LOG=""
+# This 'trap' makes sure we clean up ALL our temp files, no matter what.
+trap 'rm -f "$TEST_SCRIPT" "$MAKE_LOG"' EXIT
 
 
 # --- A little helper for printing steps ---
@@ -45,13 +45,10 @@ function error_exit() {
 # --- THE MAIN EVENT ---
 function main() {
 
-    # Gotta be root to do this stuff.
     if [[ "$(id -u)" -ne 0 ]]; then
         error_exit "This script needs to be run as root. Try 'sudo ./deploy.sh'"
     fi
 
-    # Let's start with a clean slate, but give the user a second to see what's happening.
-    sleep 1
     clear
     echo -e "${GREEN}==========================================="
     echo "  🚀 Let's get you a shiny new proxy!  "
@@ -60,21 +57,31 @@ function main() {
     # --- Step 1: Install the tools we need ---
     print_step "First, let's grab the necessary tools (git, compiler, etc.)."
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get install -y -qq git build-essential curl python3 python3-requests || error_exit "Couldn't install the required packages. Check your internet connection or 'apt'."
+    apt-get update -qq >/dev/null
+    apt-get install -y -qq git build-essential curl python3 python3-requests >/dev/null || error_exit "Couldn't install the required packages. Check your internet or 'apt'."
     echo "✅ Tools are ready."
 
     # --- Step 2: Get 3proxy and build it ---
     print_step "Downloading the latest 3proxy code and compiling it."
-    echo "This is the part that takes a minute or two..."
+    echo "This is the part that takes a minute or two... (I'll only show output if there's an error)"
 
     cd /opt || error_exit "Couldn't switch to /opt directory."
-    rm -rf 3proxy # Clean up any old attempts
+    rm -rf 3proxy
 
-    git clone --depth 1 https://github.com/3proxy/3proxy.git || error_exit "Failed to download the source code from GitHub."
+    git clone --depth 1 https://github.com/3proxy/3proxy.git >/dev/null 2>&1 || error_exit "Failed to download the source code from GitHub."
     cd 3proxy || error_exit "Something went wrong after downloading the code."
-
-    make -f Makefile.Linux || error_exit "The compilation failed. You might be on an unsupported OS."
+    
+    # --- IMPROVEMENT: Hide warnings, show errors ---
+    MAKE_LOG=$(mktemp)
+    if make -f Makefile.Linux &> "$MAKE_LOG"; then
+        # If make is successful, just print a success message.
+        echo "✅ Compilation successful."
+    else
+        # If make fails, print the full log before exiting.
+        echo -e "${RED}Compilation failed. Here is the full log:${NC}"
+        cat "$MAKE_LOG"
+        error_exit "The compilation failed. See the log above for details."
+    fi
     
     install -m 755 bin/3proxy /usr/local/bin/
     echo "✅ 3proxy is compiled and installed."
@@ -141,7 +148,6 @@ EOF
     fi
 
     echo "Running a quick connection test..."
-    # Assign the temp file path to the global variable
     TEST_SCRIPT=$(mktemp --suffix=.py)
 
     cat > "$TEST_SCRIPT" << PYTHON_EOF
