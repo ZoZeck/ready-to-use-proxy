@@ -50,6 +50,8 @@ function main() {
         error_exit "This script needs to be run as root. Try 'sudo ./deploy.sh'"
     fi
 
+    # Let's start with a clean slate, but give the user a second to see what's happening.
+    sleep 1
     clear
     echo -e "${GREEN}==========================================="
     echo "  🚀 Let's get you a shiny new proxy!  "
@@ -58,9 +60,8 @@ function main() {
     # --- Step 1: Install the tools we need ---
     print_step "First, let's grab the necessary tools (git, compiler, etc.)."
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq >/dev/null
-    # Added python3-requests here directly.
-    apt-get install -y -qq git build-essential curl python3 python3-requests >/dev/null || error_exit "Couldn't install the required packages. Check your internet connection or 'apt'."
+    apt-get update -qq
+    apt-get install -y -qq git build-essential curl python3 python3-requests || error_exit "Couldn't install the required packages. Check your internet connection or 'apt'."
     echo "✅ Tools are ready."
 
     # --- Step 2: Get 3proxy and build it ---
@@ -70,10 +71,10 @@ function main() {
     cd /opt || error_exit "Couldn't switch to /opt directory."
     rm -rf 3proxy # Clean up any old attempts
 
-    git clone --depth 1 https://github.com/3proxy/3proxy.git >/dev/null || error_exit "Failed to download the source code from GitHub."
+    git clone --depth 1 https://github.com/3proxy/3proxy.git || error_exit "Failed to download the source code from GitHub."
     cd 3proxy || error_exit "Something went wrong after downloading the code."
-    
-    make -f Makefile.Linux >/dev/null || error_exit "The compilation failed. You might be on an unsupported OS."
+
+    make -f Makefile.Linux || error_exit "The compilation failed. You might be on an unsupported OS."
     
     install -m 755 bin/3proxy /usr/local/bin/
     echo "✅ 3proxy is compiled and installed."
@@ -151,11 +152,11 @@ try:
     test_url = "https://api.ipify.org"
     proxies = {"http": proxy_url, "https": proxy_url}
     ip = requests.get(test_url, proxies=proxies, timeout=10).text
-    if ip == host:
-        print(f"Success! The world sees you as {ip}")
+    if ip.strip() == host:
+        print(f"Success! The world sees you as {ip.strip()}")
         sys.exit(0)
     else:
-        print(f"Error: Proxy IP mismatch. Expected {host}, got {ip}")
+        print(f"Error: Proxy IP mismatch. Expected {host}, got {ip.strip()}")
         sys.exit(1)
 except Exception as e:
     print(f"Fatal error during test: {e}")
