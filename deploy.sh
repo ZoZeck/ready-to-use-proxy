@@ -37,31 +37,24 @@ function install_dependencies() {
 
 function install_3proxy() {
     echo -e "${YELLOW}🛠️  Downloading and installing 3proxy v${VERSION}...${NC}"
-
+    
     local ARCH_RAW
     ARCH_RAW=$(uname -m)
     local ARCH
     case "$ARCH_RAW" in
-        "x86_64" | "amd64")
-            ARCH="x86_64"
-            ;;
-        "aarch64" | "arm64")
-            ARCH="aarch64"
-            ;;
-        "armv7l")
-            ARCH="armv7"
-            ;;
-        *)
-            error_exit "Unsupported architecture: $ARCH_RAW. Cannot download a pre-compiled binary."
-            ;;
+        "x86_64" | "amd64") ARCH="x86_64" ;;
+        "aarch64" | "arm64") ARCH="aarch64" ;;
+        "armv7l") ARCH="armv7" ;;
+        *) error_exit "Unsupported architecture: $ARCH_RAW. Cannot download a pre-compiled binary." ;;
     esac
 
     local BINARY_URL="https://github.com/z3APA3A/3proxy/releases/download/${VERSION}/3proxy-${VERSION}.${ARCH}.tar.gz"
     local TmpDir
     TmpDir=$(mktemp -d)
     
-    # Use -f to fail on server errors (like 404), -L to follow redirects
-    curl -fL -s "$BINARY_URL" -o "${TmpDir}/3proxy.tar.gz" || error_exit "Failed to download 3proxy binary. Check architecture and version."
+    # --- FIXED: Added -4 to force IPv4 connection ---
+    curl --ipv4 -fL -s "$BINARY_URL" -o "${TmpDir}/3proxy.tar.gz" || error_exit "Failed to download 3proxy binary. Check network/firewall or use the source compilation version."
+    
     tar -xzf "${TmpDir}/3proxy.tar.gz" -C "$TmpDir" || error_exit "Failed to extract 3proxy binary."
     
     install -m 755 "${TmpDir}/bin/3proxy" /usr/local/bin/
@@ -71,6 +64,7 @@ function install_3proxy() {
 
 function configure_3proxy() {
     echo -e "${YELLOW}📝 Creating configuration files and systemd service...${NC}"
+    # ... (остальной код не меняется)
     cat > /etc/3proxy/3proxy.cfg <<EOF
 nscache 65536
 timeouts 1 5 30 60 180 1800 15 60
@@ -100,6 +94,7 @@ EOF
 
 function start_and_test_proxy() {
     echo -e "${YELLOW}▶️  Starting and verifying the proxy service...${NC}"
+    # ... (остальной код не меняется)
     systemctl daemon-reload
     systemctl enable 3proxy >/dev/null 2>&1
     systemctl restart 3proxy
@@ -164,6 +159,7 @@ PYTHON_EOF
 
 function print_summary() {
     echo -e "\n${GREEN}🎉 Done! Proxy server is ready to use.${NC}"
+    # ... (остальной код не меняется)
     echo "-----------------------------------------------------"
     echo -e "🔗 Address:  ${YELLOW}$VDS_IP${NC}"
     echo -e "🚪 Port:     ${YELLOW}$PORT${NC}"
@@ -184,6 +180,7 @@ main() {
     USERNAME="user$(tr -dc a-z0-9 </dev/urandom | head -c6)"
     PASSWORD="$(tr -dc A-Za-z0-9 </dev/urandom | head -c12)"
     PORT=${1:-3128}
+    # Используем -4 для определения IP, чтобы избежать проблем с IPv6
     VDS_IP=$(curl -4 -s ifconfig.me || curl -4 -s icanhazip.com)
     [ -z "$VDS_IP" ] && error_exit "Could not detect external IPv4 address."
 
