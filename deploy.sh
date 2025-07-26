@@ -1,20 +1,18 @@
 #!/bin/bash
 
-# 1-Command 3proxy Deploy Script
+# 1-Command 3proxy Deploy Script (with source compilation for maximum compatibility)
 # A self-contained script to install, configure, and test 3proxy.
 #
 # Usage:
 #   bash <(curl -sL https://.../deploy.sh) [PORT]
 
 # --- Configuration & Colors ---
-VERSION="0.9.4"
 GREEN="\033[0;32m"
 YELLOW="\033[1;33m"
 RED="\033[0;31m"
 NC="\033[0m"
 
 # --- Helper Functions ---
-
 function error_exit() {
     echo -e "${RED}❌ ERROR: $1${NC}" >&2
     exit 1
@@ -29,37 +27,25 @@ function check_root() {
 # --- Main Logic Functions ---
 
 function install_dependencies() {
-    echo -e "${YELLOW}📦 Installing required packages (curl, python3-pip)...${NC}"
+    echo -e "${YELLOW}📦 Installing required packages (git, build-essential, curl, python3-pip)...${NC}"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq >/dev/null
-    apt-get install -y -qq curl python3 python3-pip >/dev/null || error_exit "Failed to install dependencies."
+    apt-get install -y -qq git build-essential curl python3 python3-pip >/dev/null || error_exit "Failed to install dependencies."
 }
 
+# --- MODIFIED: Compiles 3proxy from source for universal compatibility ---
 function install_3proxy() {
-    echo -e "${YELLOW}🛠️  Downloading and installing 3proxy v${VERSION}...${NC}"
+    echo -e "${YELLOW}🛠️  Cloning and compiling 3proxy from source (this may take a few minutes)...${NC}"
     
-    local ARCH_RAW
-    ARCH_RAW=$(uname -m)
-    local ARCH
-    case "$ARCH_RAW" in
-        "x86_64" | "amd64") ARCH="x86_64" ;;
-        "aarch64" | "arm64") ARCH="aarch64" ;;
-        "armv7l") ARCH="armv7" ;;
-        *) error_exit "Unsupported architecture: $ARCH_RAW. Cannot download a pre-compiled binary." ;;
-    esac
-
-    # --- FINAL FIX: Using the new repository URL ---
-    local BINARY_URL="https://github.com/3proxy/3proxy/releases/download/${VERSION}/3proxy-${VERSION}.${ARCH}.tar.gz"
+    cd /opt || error_exit "Cannot change directory to /opt"
+    rm -rf 3proxy
+    # Using the correct, new repository URL for git clone
+    git clone --depth 1 https://github.com/3proxy/3proxy.git || error_exit "Failed to clone 3proxy repository. Check network connection to github.com."
+    cd 3proxy || error_exit "Cannot change directory to /opt/3proxy"
     
-    local TmpDir
-    TmpDir=$(mktemp -d)
+    make -f Makefile.Linux || error_exit "Failed to compile 3proxy."
     
-    curl --ipv4 -fL -s "$BINARY_URL" -o "${TmpDir}/3proxy.tar.gz" || error_exit "Failed to download 3proxy binary. The URL might have changed."
-    
-    tar -xzf "${TmpDir}/3proxy.tar.gz" -C "$TmpDir" || error_exit "Failed to extract 3proxy binary."
-    
-    install -m 755 "${TmpDir}/bin/3proxy" /usr/local/bin/
-    rm -rf "$TmpDir"
+    install -m 755 bin/3proxy /usr/local/bin/
     mkdir -p /etc/3proxy/ /var/log/3proxy
 }
 
