@@ -20,6 +20,13 @@ BLUE='\033[0;34m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# --- Global variables & Cleanup ---
+# Define TEST_SCRIPT here so it's globally available for the trap
+TEST_SCRIPT=""
+# This 'trap' makes sure we clean up the temp file, no matter what.
+trap 'rm -f "$TEST_SCRIPT"' EXIT
+
+
 # --- A little helper for printing steps ---
 function print_step() {
     echo -e "\n${BLUE}➤ $1${NC}"
@@ -50,39 +57,33 @@ function main() {
 
     # --- Step 1: Install the tools we need ---
     print_step "First, let's grab the necessary tools (git, compiler, etc.)."
-    # This might take a moment, so let's be patient.
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq >/dev/null
-    apt-get install -y -qq git build-essential curl python3 python3-pip >/dev/null || error_exit "Couldn't install the required packages. Check your internet connection or 'apt'."
+    apt-get install -y -qq git build-essential curl python3-pip >/dev/null || error_exit "Couldn't install the required packages. Check your internet connection or 'apt'."
     echo "✅ Tools are ready."
 
     # --- Step 2: Get 3proxy and build it ---
     print_step "Downloading the latest 3proxy code and compiling it."
     echo "This is the part that takes a minute or two..."
 
-    # We'll work in /opt, it's a good place for this kind of thing.
     cd /opt || error_exit "Couldn't switch to /opt directory."
     rm -rf 3proxy # Clean up any old attempts
 
-    # Clone the repo. --depth 1 makes it faster.
     git clone --depth 1 https://github.com/3proxy/3proxy.git >/dev/null || error_exit "Failed to download the source code from GitHub."
     cd 3proxy || error_exit "Something went wrong after downloading the code."
     
-    # Let's make the magic happen.
     make -f Makefile.Linux >/dev/null || error_exit "The compilation failed. You might be on an unsupported OS."
     
-    # Put the finished program where it belongs.
     install -m 755 bin/3proxy /usr/local/bin/
     echo "✅ 3proxy is compiled and installed."
 
     # --- Step 3: Create the configuration ---
     print_step "Setting up the configuration file."
     
-    # Let's generate some random, secure credentials.
     local USERNAME="user$(tr -dc a-z0-9 </dev/urandom | head -c6)"
     local PASSWORD
     PASSWORD=$(tr -dc A-Za-z0-9 </dev/urandom | head -c12)
-    local PORT=${1:-3128} # Use the port from the command line, or 3128 as a default.
+    local PORT=${1:-3128}
     local VDS_IP
     VDS_IP=$(curl -4 -s ifconfig.me || curl -4 -s icanhazip.com)
 
@@ -90,35 +91,16 @@ function main() {
         error_exit "Couldn't figure out your server's public IP address."
     fi
 
-    # Create directories for the config and logs.
     mkdir -p /etc/3proxy/ /var/log/3proxy
 
-    # Here's the config file. I've added comments to explain what's what.
     cat > /etc/3proxy/3proxy.cfg <<EOF
 # --- 3proxy Config ---
-# Let's keep things simple and secure.
-
-# DNS cache. Good for performance.
 nscache 65536
-
-# Timeouts in seconds.
 timeouts 1 5 30 60 180 1800 15 60
-
-# We need a user and a password. 'strong' means both are required.
 auth strong
 users $USERNAME:CL:$PASSWORD
-
-# Only allow our authenticated user.
 allow $USERNAME
-
-# The actual proxy service.
-# -a means it's an anonymous proxy.
-# -p is the port.
-# -i0.0.0.0 means listen on all available network interfaces.
-# -e is the external IP your traffic will come from.
 proxy -n -a -p$PORT -i0.0.0.0 -e$VDS_IP
-
-# A little log file, just in case.
 log /var/log/3proxy/3proxy.log D
 logformat "- +_L%t.%. %N.%p %E %U %C:%c %R:%r %O %I %h %T"
 EOF
@@ -127,20 +109,16 @@ EOF
     # --- Step 4: Set up the service to run automatically ---
     print_step "Creating a systemd service to keep the proxy running."
     
-    # This systemd unit file will make sure 3proxy starts on boot
-    # and restarts if it ever crashes.
     cat > /etc/systemd/system/3proxy.service <<EOF
 [Unit]
 Description=3proxy Tiny Proxy Server
 After=network.target
-
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/3proxy /etc/3proxy/3proxy.cfg
 ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
 RestartSec=10
-
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -153,7 +131,6 @@ EOF
     systemctl enable 3proxy >/dev/null 2>&1
     systemctl restart 3proxy
     
-    # Give it a couple of seconds to wake up.
     sleep 3
 
     if ! systemctl is-active --quiet 3proxy; then
@@ -161,12 +138,9 @@ EOF
         error_exit "The 3proxy service failed to start. The logs above might tell you why."
     fi
 
-    # Now for a little magic. We'll create a Python script on the fly to test our new proxy.
     echo "Running a quick connection test..."
-    local TEST_SCRIPT
+    # Assign the temp file path to the global variable
     TEST_SCRIPT=$(mktemp --suffix=.py)
-    # This 'trap' makes sure we clean up the temp file, no matter what.
-    trap 'rm -f "$TEST_SCRIPT"' EXIT
 
     cat > "$TEST_SCRIPT" << PYTHON_EOF
 import sys, requests
@@ -187,6 +161,7 @@ except Exception as e:
     sys.exit(1)
 PYTHON_EOF
 
+    # Use apt to install requests, the "right" way for modern Debian/Ubuntu
     apt-get install -y -qq python3-requests >/dev/null
     
     if ! python3 "$TEST_SCRIPT" "$VDS_IP" "$PORT" "$USERNAME" "$PASSWORD"; then
