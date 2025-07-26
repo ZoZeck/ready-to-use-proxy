@@ -48,12 +48,13 @@ function install_3proxy() {
         *) error_exit "Unsupported architecture: $ARCH_RAW. Cannot download a pre-compiled binary." ;;
     esac
 
-    local BINARY_URL="https://github.com/z3APA3A/3proxy/releases/download/${VERSION}/3proxy-${VERSION}.${ARCH}.tar.gz"
+    # --- FINAL FIX: Using the new repository URL ---
+    local BINARY_URL="https://github.com/3proxy/3proxy/releases/download/${VERSION}/3proxy-${VERSION}.${ARCH}.tar.gz"
+    
     local TmpDir
     TmpDir=$(mktemp -d)
     
-    # --- FIXED: Added -4 to force IPv4 connection ---
-    curl --ipv4 -fL -s "$BINARY_URL" -o "${TmpDir}/3proxy.tar.gz" || error_exit "Failed to download 3proxy binary. Check network/firewall or use the source compilation version."
+    curl --ipv4 -fL -s "$BINARY_URL" -o "${TmpDir}/3proxy.tar.gz" || error_exit "Failed to download 3proxy binary. The URL might have changed."
     
     tar -xzf "${TmpDir}/3proxy.tar.gz" -C "$TmpDir" || error_exit "Failed to extract 3proxy binary."
     
@@ -64,7 +65,6 @@ function install_3proxy() {
 
 function configure_3proxy() {
     echo -e "${YELLOW}📝 Creating configuration files and systemd service...${NC}"
-    # ... (остальной код не меняется)
     cat > /etc/3proxy/3proxy.cfg <<EOF
 nscache 65536
 timeouts 1 5 30 60 180 1800 15 60
@@ -94,7 +94,6 @@ EOF
 
 function start_and_test_proxy() {
     echo -e "${YELLOW}▶️  Starting and verifying the proxy service...${NC}"
-    # ... (остальной код не меняется)
     systemctl daemon-reload
     systemctl enable 3proxy >/dev/null 2>&1
     systemctl restart 3proxy
@@ -110,40 +109,28 @@ function start_and_test_proxy() {
     trap 'rm -f "$TEST_SCRIPT"' EXIT
 
     cat > "$TEST_SCRIPT" << 'PYTHON_EOF'
-import sys
-import requests
+import sys, requests
 
 def main():
-    if len(sys.argv) != 5:
-        print("Usage: python test_proxy.py <host> <port> <user> <pass>")
-        sys.exit(1)
-
+    if len(sys.argv) != 5: sys.exit(1)
     host, port, user, password = sys.argv[1:]
-    proxy_server_ip = host
     proxy_url = f"http://{user}:{password}@{host}:{port}"
     proxies = {"http": proxy_url, "https": proxy_url}
     test_url = "https://api.ipify.org?format=json"
-    
-    print(f"[*] Testing proxy {host}:{port} by connecting to {test_url}...")
-    
+    print(f"[*] Testing proxy {host}:{port}...")
     try:
         response = requests.get(test_url, proxies=proxies, timeout=15)
         response.raise_for_status()
         result_ip = response.json().get("ip")
-        print(f"[+] Successfully connected. Response IP: {result_ip}")
-
-        if result_ip == proxy_server_ip:
-            print(f"[+] SUCCESS: Response IP ({result_ip}) matches the proxy server IP.")
+        print(f"[+] Success! Response IP: {result_ip}")
+        if result_ip == host:
+            print(f"[+] SUCCESS: Response IP matches proxy IP.")
             sys.exit(0)
         else:
-            print(f"[!] ERROR: Response IP ({result_ip}) does not match proxy IP ({proxy_server_ip}).")
+            print(f"[!] ERROR: Response IP ({result_ip}) does not match proxy IP ({host}).")
             sys.exit(1)
-
-    except requests.exceptions.ProxyError as e:
-        print(f"[!] FATAL: Proxy error. Check credentials or if the port is open.\n    Details: {e}")
-        sys.exit(1)
-    except requests.exceptions.RequestException as e:
-        print(f"[!] FATAL: An unexpected error occurred.\n    Details: {e}")
+    except Exception as e:
+        print(f"[!] FATAL: Proxy test failed. Details: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
@@ -159,7 +146,6 @@ PYTHON_EOF
 
 function print_summary() {
     echo -e "\n${GREEN}🎉 Done! Proxy server is ready to use.${NC}"
-    # ... (остальной код не меняется)
     echo "-----------------------------------------------------"
     echo -e "🔗 Address:  ${YELLOW}$VDS_IP${NC}"
     echo -e "🚪 Port:     ${YELLOW}$PORT${NC}"
@@ -173,14 +159,12 @@ function print_summary() {
 }
 
 # --- Main Execution ---
-
 main() {
     check_root
     
     USERNAME="user$(tr -dc a-z0-9 </dev/urandom | head -c6)"
     PASSWORD="$(tr -dc A-Za-z0-9 </dev/urandom | head -c12)"
     PORT=${1:-3128}
-    # Используем -4 для определения IP, чтобы избежать проблем с IPv6
     VDS_IP=$(curl -4 -s ifconfig.me || curl -4 -s icanhazip.com)
     [ -z "$VDS_IP" ] && error_exit "Could not detect external IPv4 address."
 
