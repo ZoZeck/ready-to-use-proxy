@@ -37,13 +37,31 @@ function install_dependencies() {
 
 function install_3proxy() {
     echo -e "${YELLOW}🛠️  Downloading and installing 3proxy v${VERSION}...${NC}"
+
+    local ARCH_RAW
+    ARCH_RAW=$(uname -m)
     local ARCH
-    ARCH=$(uname -m)
+    case "$ARCH_RAW" in
+        "x86_64" | "amd64")
+            ARCH="x86_64"
+            ;;
+        "aarch64" | "arm64")
+            ARCH="aarch64"
+            ;;
+        "armv7l")
+            ARCH="armv7"
+            ;;
+        *)
+            error_exit "Unsupported architecture: $ARCH_RAW. Cannot download a pre-compiled binary."
+            ;;
+    esac
+
     local BINARY_URL="https://github.com/z3APA3A/3proxy/releases/download/${VERSION}/3proxy-${VERSION}.${ARCH}.tar.gz"
     local TmpDir
     TmpDir=$(mktemp -d)
     
-    curl -sL "$BINARY_URL" -o "${TmpDir}/3proxy.tar.gz" || error_exit "Failed to download 3proxy binary."
+    # Use -f to fail on server errors (like 404), -L to follow redirects
+    curl -fL -s "$BINARY_URL" -o "${TmpDir}/3proxy.tar.gz" || error_exit "Failed to download 3proxy binary. Check architecture and version."
     tar -xzf "${TmpDir}/3proxy.tar.gz" -C "$TmpDir" || error_exit "Failed to extract 3proxy binary."
     
     install -m 755 "${TmpDir}/bin/3proxy" /usr/local/bin/
@@ -80,7 +98,6 @@ WantedBy=multi-user.target
 EOF
 }
 
-# NEW: This function now creates and runs the Python test script
 function start_and_test_proxy() {
     echo -e "${YELLOW}▶️  Starting and verifying the proxy service...${NC}"
     systemctl daemon-reload
@@ -93,12 +110,10 @@ function start_and_test_proxy() {
         error_exit "3proxy service failed to start. See logs above."
     fi
 
-    # Create a temporary Python script to test the proxy
     local TEST_SCRIPT
     TEST_SCRIPT=$(mktemp --suffix=.py)
-    trap 'rm -f "$TEST_SCRIPT"' EXIT # Ensure cleanup on exit
+    trap 'rm -f "$TEST_SCRIPT"' EXIT
 
-    # Use a here-document to write the Python code to the temp file
     cat > "$TEST_SCRIPT" << 'PYTHON_EOF'
 import sys
 import requests
